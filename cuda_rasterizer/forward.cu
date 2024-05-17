@@ -459,7 +459,7 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 	float C[CHANNELS] = {0};
 	float weight = 0;
 	float D = 0;
-	float half_weight = 0;
+	float mid_T = 0.5f;
 
 	// Iteration 1.
 	// Iterate over batches until all done or range is complete
@@ -514,20 +514,19 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 			weight += alpha * T;
-
 			T = test_T;
-
 			// Keep track of last range entry to update this
 			// pixel.
 			last_contributor = contributor;
 		}
 	}
 
+	//monotonic decreasing T from 1.0 to T, find the mid
+	mid_T = (T + 1.0) / 2;
 	//reset values
 	toDo = range.y - range.x;
 	T = 1.0f;
 	done = !inside;
-	half_weight = 0.5f * weight;
 	// Iteration 2.
 	// Find the depth value that makes T fall half of weights
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -569,12 +568,11 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
-			if (test_T < 0.0001f)
-			{
-				done = true;
-				continue;
-			}
-			if (T > half_weight && test_T <= half_weight)
+
+			// The median point method, see
+			// https://arxiv.org/abs/2210.04217
+
+			if (T > mid_T && test_T <= mid_T)
 			{
 				D = depths[collected_id[j]];
 				done = true;
@@ -586,6 +584,7 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 
 	// All threads that treat valid pixel write out their final
 	// rendering data to the frame and auxiliary buffers.
+	T = 1 - weight;
 	if (inside)
 	{
 		n_contrib[pix_id] = last_contributor;
